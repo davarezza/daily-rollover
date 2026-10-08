@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manajemen Budget Harian & Mingguan</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Feather Icons CDN -->
+    <script src="https://unpkg.com/feather-icons"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen antialiased flex flex-col">
+
+    <!-- Auth Container (Tampil Saat Belum Login) -->
+    <div id="auth-container" class="fixed inset-0 z-50 bg-slate-100 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-lg border border-slate-200 w-full max-w-md p-6 space-y-5">
+            <div class="text-center space-y-2">
+                <div class="inline-flex p-3 bg-indigo-50 text-indigo-600 rounded-xl mb-1">
+                    <i data-feather="wallet" class="w-8 h-8"></i>
+                </div>
+                <h2 id="auth-title" class="text-xl font-bold text-slate-900">Masuk ke HematKu</h2>
+                <p id="auth-subtitle" class="text-xs text-slate-500">Kelola budget harian dan mingguan secara terorganisir.</p>
+            </div>
+
+            <form id="form-auth" class="space-y-4">
+                <div>
+                    <label for="auth-email" class="block text-xs font-semibold text-slate-700 uppercase mb-1">Email</label>
+                    <input type="email" id="auth-email" placeholder="nama@email.com" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label for="auth-password" class="block text-xs font-semibold text-slate-700 uppercase mb-1">Password</label>
+                    <input type="password" id="auth-password" placeholder="••••••••" minlength="6" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+
+                <button type="submit" id="btn-auth-submit" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg text-sm transition-colors">
+                    Masuk
+                </button>
+            </form>
+
+            <div class="text-center text-xs text-slate-500 pt-2 border-t border-slate-100">
+                <span id="auth-switch-text">Belum punya akun?</span>
+                <button type="button" id="btn-toggle-auth" class="text-indigo-600 font-semibold hover:underline ml-1">Daftar sekarang</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App Wrapper (Hanya Tampil Setelah Login) -->
+    <div id="app-wrapper" class="hidden flex-col min-h-screen">
+        
+        <!-- Header Navigation -->
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+            <div class="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                        <i data-feather="wallet" class="w-6 h-6"></i>
+                    </div>
+                    <h1 class="text-xl font-bold text-slate-900 tracking-tight">HematKu</h1>
+                </div>
+                
+                <div class="flex items-center space-x-2">
+                    <button id="btn-open-settings" aria-label="Pengaturan Budget" class="inline-flex items-center space-x-2 text-sm font-medium text-slate-600 hover:text-indigo-600 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">
+                        <i data-feather="settings" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Pengaturan</span>
+                    </button>
+                    <button id="btn-logout" aria-label="Keluar" class="inline-flex items-center space-x-2 text-sm font-medium text-rose-600 hover:text-rose-700 px-3 py-2 rounded-lg hover:bg-rose-50 transition-colors">
+                        <i data-feather="log-out" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Keluar</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="max-w-5xl mx-auto px-4 sm:px-6 py-6 flex-grow w-full space-y-6">
+            <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+            <!-- Metric Cards Grid -->
+            <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between text-slate-500 mb-2">
+                            <span class="text-xs font-semibold uppercase tracking-wider">Budget Mingguan</span>
+                            <i data-feather="calendar" class="w-4 h-4 text-slate-400"></i>
+                        </div>
+                        <div id="val-weekly-budget" class="text-2xl font-bold text-slate-900">Rp 0</div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
+                        <span>Pengeluaran:</span>
+                        <span id="val-weekly-spent" class="font-semibold text-slate-700">Rp 0</span>
+                    </div>
+                </div>
+
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between text-slate-500 mb-2">
+                            <span class="text-xs font-semibold uppercase tracking-wider">Sisa Budget Mingguan</span>
+                            <span id="badge-weekly-status" class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">Aman</span>
+                        </div>
+                        <div id="val-weekly-remaining" class="text-2xl font-bold text-emerald-600">Rp 0</div>
+                    </div>
+                    <div class="mt-4">
+                        <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div id="bar-weekly-progress" class="bg-emerald-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between text-slate-500 mb-2">
+                            <span class="text-xs font-semibold uppercase tracking-wider">Target Hari Ini</span>
+                            <i data-feather="clock" class="w-4 h-4 text-slate-400"></i>
+                        </div>
+                        <div id="val-daily-budget" class="text-2xl font-bold text-slate-900">Rp 0</div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
+                        <span>Pengeluaran Hari Ini:</span>
+                        <span id="val-daily-spent" class="font-semibold text-slate-700">Rp 0</span>
+                    </div>
+                </div>
+
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between text-slate-500 mb-2">
+                            <span class="text-xs font-semibold uppercase tracking-wider">Sisa Hari Ini</span>
+                            <span id="badge-daily-status" class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800">Aman</span>
+                        </div>
+                        <div id="val-daily-remaining" class="text-2xl font-bold text-emerald-600">Rp 0</div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center text-xs">
+                        <span class="text-slate-500">Status Harian</span>
+                        <span id="val-daily-percentage" class="font-medium text-slate-700">0% terpakai</span>
+                    </div>
+                </div>
+
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between text-slate-500 mb-2">
+                            <span class="text-xs font-semibold uppercase tracking-wider">Carry-Over Sisa Kemarin</span>
+                            <i data-feather="bar-chart-2" class="w-4 h-4 text-slate-400"></i>
+                        </div>
+                        <div id="val-carry-over" class="text-2xl font-bold text-indigo-600">Rp 0</div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500">
+                        Sisa/defisit dari hari sebelumnya pada minggu aktif.
+                    </div>
+                </div>
+
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between text-slate-500 mb-2">
+                            <span class="text-xs font-semibold uppercase tracking-wider">Carry-Over Minggu Lalu</span>
+                            <i data-feather="archive" class="w-4 h-4 text-slate-400"></i>
+                        </div>
+                        <div id="val-weekly-carry-over" class="text-2xl font-bold text-indigo-600">Rp 0</div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500">
+                        Akumulasi sisa/defisit dari minggu-minggu sebelumnya.
+                    </div>
+                </div>
+            </section>
+
+            <!-- Actions & Filter Bar -->
+            <section class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                <button id="btn-open-add-modal" class="inline-flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2.5 rounded-lg transition-colors min-h-[44px]">
+                    <i data-feather="plus" class="w-5 h-5"></i>
+                    <span>Tambah Transaksi</span>
+                </button>
+
+                <div class="flex flex-col sm:flex-row items-center gap-3">
+                    <div class="relative w-full sm:w-64">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                            <i data-feather="search" class="w-4 h-4"></i>
+                        </div>
+                        <input type="text" id="search-input" placeholder="Cari transaksi..." class="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+
+                    <div class="relative w-full sm:w-44">
+                        <select id="filter-category" class="w-full pl-3 pr-8 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none">
+                            <option value="all">Semua Kategori</option>
+                            <option value="Makanan & Minuman">Makanan & Minuman</option>
+                            <option value="Transportasi">Transportasi</option>
+                            <option value="Belanja">Belanja</option>
+                            <option value="Tagihan">Tagihan</option>
+                            <option value="Hiburan">Hiburan</option>
+                            <option value="Lainnya">Lainnya</option>
+                        </select>
+                        <div class="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none text-slate-400">
+                            <i data-feather="chevron-down" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Transactions History -->
+            <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
+                    <h2 class="text-base font-semibold text-slate-900 flex items-center space-x-2">
+                        <i data-feather="clock" class="w-4 h-4 text-indigo-600"></i>
+                        <span>Riwayat Transaksi</span>
+                    </h2>
+                    <span id="transaction-count" class="text-xs font-medium bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full">0 transaksi</span>
+                </div>
+
+                <div id="transaction-list" class="divide-y divide-slate-100">
+                    <div id="empty-state" class="py-12 px-4 text-center">
+                        <div class="inline-flex p-3 bg-slate-100 text-slate-400 rounded-full mb-3">
+                            <i data-feather="tag" class="w-6 h-6"></i>
+                        </div>
+                        <p class="text-slate-600 font-medium">Belum ada transaksi recorded</p>
+                        <p class="text-xs text-slate-400 mt-1">Klik tombol 'Tambah Transaksi' untuk memulai pencatatan.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modals (Transaksi & Pengaturan) -->
+    <div id="modal-transaction" class="fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden transform transition-all">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                <h3 id="modal-title" class="font-semibold text-slate-900">Tambah Transaksi</h3>
+                <button id="btn-close-modal" aria-label="Tutup Modal" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                    <i data-feather="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="form-transaction" class="p-5 space-y-4">
+                <input type="hidden" id="tx-id">
+                <div>
+                    <label for="tx-title" class="block text-xs font-semibold text-slate-700 uppercase mb-1">Deskripsi / Judul</label>
+                    <input type="text" id="tx-title" placeholder="Contoh: Makan Siang" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label for="tx-amount" class="block text-xs font-semibold text-slate-700 uppercase mb-1">Jumlah (Rp)</label>
+                    <input type="number" id="tx-amount" min="1" placeholder="0" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label for="tx-category" class="block text-xs font-semibold text-slate-700 uppercase mb-1">Kategori</label>
+                        <select id="tx-category" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="Makanan & Minuman">Makanan & Minuman</option>
+                            <option value="Transportasi">Transportasi</option>
+                            <option value="Belanja">Belanja</option>
+                            <option value="Tagihan">Tagihan</option>
+                            <option value="Hiburan">Hiburan</option>
+                            <option value="Lainnya">Lainnya</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="tx-date" class="block text-xs font-semibold text-slate-700 uppercase mb-1">Tanggal</label>
+                        <input type="date" id="tx-date" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+                <div class="pt-3 flex justify-end space-x-3 border-t border-slate-100">
+                    <button type="button" id="btn-cancel-modal" class="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50">Batal</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium">Simpan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="modal-settings" class="fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                <h3 class="font-semibold text-slate-900">Pengaturan Budget</h3>
+                <button id="btn-close-settings" aria-label="Tutup Pengaturan" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                    <i data-feather="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="form-settings" class="p-5 space-y-4">
+                <div>
+                    <label for="set-weekly-budget" class="block text-xs font-semibold text-slate-700 uppercase mb-1">Budget Mingguan (Rp)</label>
+                    <input type="number" id="set-weekly-budget" min="0" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="pt-3 flex justify-end space-x-3 border-t border-slate-100">
+                    <button type="button" id="btn-cancel-settings" class="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50">Batal</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium">Simpan Pengaturan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Application Script -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>

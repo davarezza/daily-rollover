@@ -1,0 +1,22 @@
+/* Custom CSS khusus untuk penyesuaian yang tidak tercakup secara mudah oleh Tailwind Utility */
+
+/* Optimasi transisi untuk animasi toast dan modal */
+.toast-enter {
+    animation: slideIn 0.2s ease-out forwards;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(100%);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Memastikan elemen form tanggal konsisten di browser mobile */
+input[type="date"] {
+    min-height: 42px;
+}
