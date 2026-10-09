@@ -226,7 +226,14 @@ const initUserRealtimeSync = (uid) => {
     });
 };
 
-// === KALKULASI & RENDER ===
+// === HELPER FORMAT TANGGAL INDONESIA ===
+const formatDateIndonesian = (dateString) => {
+    const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    const date = new Date(dateString + 'T00:00:00');
+    return date.toLocaleDateString('id-ID', options);
+};
+
+// === KALKULASI BUDGET METRICS ===
 const calculateBudgetMetrics = () => {
     const today = new Date();
     const todayStr = getTodayString();
@@ -234,14 +241,17 @@ const calculateBudgetMetrics = () => {
 
     const { startStr, endStr } = getWeekRange(today);
 
+    // 1. Filter Transaksi Minggu Ini & Lalu
     const currentWeekTransactions = state.transactions.filter(tx => 
         tx.date >= startStr && tx.date <= endStr
     );
     const pastTransactions = state.transactions.filter(tx => tx.date < startStr);
 
+    // 2. Transaksi & Sisa Budget Mingguan
     const totalWeeklySpent = currentWeekTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
     const weeklyRemaining = state.weeklyBudget - totalWeeklySpent;
 
+    // 3. All-Time Weekly Carry-Over (Minggu-Minggu Lalu)
     const pastWeeksSet = new Set();
     pastTransactions.forEach(tx => {
         const { startStr: weekStart } = getWeekRange(new Date(tx.date));
@@ -252,12 +262,15 @@ const calculateBudgetMetrics = () => {
     const totalPastWeeklySpent = pastTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
     const weeklyCarryOver = totalPastWeeklyAllocated - totalPastWeeklySpent;
 
+    // 4. Budget Dasar Harian (Weekday)
     const baseDailyBudget = Math.round(state.weeklyBudget / 5);
 
+    // Pengeluaran Murni Hari Ini
     const todaySpent = currentWeekTransactions
         .filter(tx => tx.date === todayStr)
         .reduce((sum, tx) => sum + Number(tx.amount), 0);
 
+    // Hitung Carry-Over Harian Minggu Aktif (Senin s/d Kemarin)
     let pastWeekdaysSpent = 0;
     let pastWeekdaysCount = 0;
 
@@ -277,6 +290,9 @@ const calculateBudgetMetrics = () => {
     }
 
     const dailyCarryOver = (pastWeekdaysCount * baseDailyBudget) - pastWeekdaysSpent;
+    
+    // Target murni hari ini & sisa efektif harian
+    const rawDailyTarget = isTodayWeekday ? baseDailyBudget : 0;
     const effectiveDailyBudget = isTodayWeekday ? (baseDailyBudget + dailyCarryOver) : 0;
     const dailyRemaining = effectiveDailyBudget - todaySpent;
 
@@ -285,9 +301,10 @@ const calculateBudgetMetrics = () => {
         weeklySpent: totalWeeklySpent,
         weeklyRemaining: weeklyRemaining,
         weeklyCarryOver: isNaN(weeklyCarryOver) ? 0 : weeklyCarryOver,
-        dailyBudget: effectiveDailyBudget,
-        dailySpent: todaySpent,
-        dailyRemaining: dailyRemaining,
+        dailyTarget: rawDailyTarget,               // Target murni harian
+        dailyBudgetEffective: effectiveDailyBudget,// Target + Carry Over
+        dailySpent: todaySpent,                    // Pengeluaran hari ini
+        dailyRemaining: dailyRemaining,            // Sisa hari ini
         dailyCarryOver: isNaN(dailyCarryOver) ? 0 : dailyCarryOver,
         isTodayWeekday: isTodayWeekday
     };
@@ -307,13 +324,11 @@ const updateStatusBadge = (badgeEl, value, limit) => {
     }
 };
 
+// === RENDER DASHBOARD ===
 const renderDashboard = () => {
     const metrics = calculateBudgetMetrics();
 
-    if (!metrics.isTodayWeekday) {
-        elements.dailyBudget.textContent = "Weekend (Rp 0)";
-        elements.dailyPercentage.textContent = "Hari Libur Budget";
-    }
+    // 1. Metric Mingguan
     elements.weeklyBudget.textContent = formatIDR(metrics.weeklyBudget);
     elements.weeklySpent.textContent = formatIDR(metrics.weeklySpent);
     elements.weeklyRemaining.textContent = formatIDR(metrics.weeklyRemaining);
@@ -325,16 +340,30 @@ const renderDashboard = () => {
     
     updateStatusBadge(elements.weeklyStatusBadge, metrics.weeklySpent, metrics.weeklyBudget);
 
-    elements.dailyBudget.textContent = formatIDR(metrics.dailyBudget);
+    // 2. Target Hari Ini (Murni) & Pengeluaran Hari Ini
+    if (!metrics.isTodayWeekday) {
+        elements.dailyBudget.textContent = "Weekend (Rp 0)";
+        elements.dailyPercentage.textContent = "Hari Libur Budget";
+    } else {
+        elements.dailyBudget.textContent = formatIDR(metrics.dailyTarget);
+    }
     elements.dailySpent.textContent = formatIDR(metrics.dailySpent);
+
+    // 3. Sisa Hari Ini (Sisa Efektif dari Target + Carry Over)
     elements.dailyRemaining.textContent = formatIDR(metrics.dailyRemaining);
     elements.dailyRemaining.className = `text-2xl font-bold ${metrics.dailyRemaining < 0 ? 'text-rose-600' : 'text-emerald-600'}`;
 
-    const dailyUsedPercent = metrics.dailyBudget > 0 ? Math.round((metrics.dailySpent / metrics.dailyBudget) * 100) : 0;
-    elements.dailyPercentage.textContent = `${dailyUsedPercent}% terpakai`;
+    const dailyUsedPercent = metrics.dailyBudgetEffective > 0 
+        ? Math.round((metrics.dailySpent / metrics.dailyBudgetEffective) * 100) 
+        : 0;
+    
+    if (metrics.isTodayWeekday) {
+        elements.dailyPercentage.textContent = `${dailyUsedPercent}% terpakai`;
+    }
 
-    updateStatusBadge(elements.dailyStatusBadge, metrics.dailySpent, metrics.dailyBudget);
+    updateStatusBadge(elements.dailyStatusBadge, metrics.dailySpent, metrics.dailyBudgetEffective);
 
+    // 4. Carry-Over Cards
     elements.carryOver.textContent = formatIDR(metrics.dailyCarryOver);
     elements.carryOver.className = `text-2xl font-bold ${metrics.dailyCarryOver < 0 ? 'text-rose-600' : 'text-indigo-600'}`;
 
@@ -347,6 +376,7 @@ const renderDashboard = () => {
     renderTransactions();
 };
 
+// === RENDER TRANSAKSI (GIFTED WITH SECTION PER HARI) ===
 const renderTransactions = () => {
     let filtered = state.transactions.filter(tx => {
         const matchesCategory = state.filterCategory === 'all' || tx.category === state.filterCategory;
@@ -354,7 +384,6 @@ const renderTransactions = () => {
         return matchesCategory && matchesSearch;
     });
 
-    filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
     elements.transactionCount.textContent = `${filtered.length} transaksi`;
 
     if (filtered.length === 0) {
@@ -363,35 +392,61 @@ const renderTransactions = () => {
         elements.emptyState.classList.remove('hidden');
     } else {
         elements.emptyState.classList.add('hidden');
-        
-        const html = filtered.map(tx => `
-            <div class="p-4 sm:px-5 flex items-center justify-between hover:bg-slate-50/80 transition-colors">
-                <div class="flex items-center space-x-3.5 min-w-0">
-                    <div class="p-2.5 bg-slate-100 text-slate-600 rounded-lg shrink-0">
-                        <i data-feather="tag" class="w-4 h-4"></i>
+
+        // Grouping transaksi per tanggal
+        const grouped = filtered.reduce((groups, tx) => {
+            const date = tx.date;
+            if (!groups[date]) groups[date] = [];
+            groups[date].push(tx);
+            return groups;
+        }, {});
+
+        // Sort tanggal terbaru di atas
+        const sortedDates = Object.keys(grouped).sort((a, b) => new Date(b) - new Date(a));
+
+        const html = sortedDates.map(dateStr => {
+            const txs = grouped[dateStr];
+            const totalSpentOnDate = txs.reduce((sum, t) => sum + Number(t.amount), 0);
+
+            const txItemsHtml = txs.map(tx => `
+                <div class="p-4 sm:px-5 flex items-center justify-between hover:bg-slate-50/80 transition-colors">
+                    <div class="flex items-center space-x-3.5 min-w-0">
+                        <div class="p-2.5 bg-slate-100 text-slate-600 rounded-lg shrink-0">
+                            <i data-feather="tag" class="w-4 h-4"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <p class="text-sm font-semibold text-slate-900 truncate">${tx.title}</p>
+                            <span class="inline-block bg-slate-100 px-2 py-0.5 rounded text-xs text-slate-600 font-medium mt-0.5">${tx.category}</span>
+                        </div>
                     </div>
-                    <div class="min-w-0">
-                        <p class="text-sm font-semibold text-slate-900 truncate">${tx.title}</p>
-                        <div class="flex items-center space-x-2 text-xs text-slate-500 mt-0.5">
-                            <span class="bg-slate-100 px-2 py-0.5 rounded text-slate-600 font-medium">${tx.category}</span>
-                            <span>•</span>
-                            <span>${tx.date}</span>
+                    <div class="flex items-center space-x-3 shrink-0 ml-3">
+                        <span class="text-sm font-bold text-slate-900">${formatIDR(tx.amount)}</span>
+                        <div class="flex items-center space-x-1">
+                            <button data-action="edit" data-id="${tx.id}" aria-label="Edit transaksi" class="btn-action p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100">
+                                <i data-feather="edit-2" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
+                            <button data-action="delete" data-id="${tx.id}" aria-label="Hapus transaksi" class="btn-action p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100">
+                                <i data-feather="trash-2" class="w-4 h-4 pointer-events-none"></i>
+                            </button>
                         </div>
                     </div>
                 </div>
-                <div class="flex items-center space-x-3 shrink-0 ml-3">
-                    <span class="text-sm font-bold text-slate-900">${formatIDR(tx.amount)}</span>
-                    <div class="flex items-center space-x-1">
-                        <button data-action="edit" data-id="${tx.id}" aria-label="Edit transaksi" class="btn-action p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100">
-                            <i data-feather="edit-2" class="w-4 h-4 pointer-events-none"></i>
-                        </button>
-                        <button data-action="delete" data-id="${tx.id}" aria-label="Hapus transaksi" class="btn-action p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100">
-                            <i data-feather="trash-2" class="w-4 h-4 pointer-events-none"></i>
-                        </button>
+            `).join('');
+
+            return `
+                <div class="border-b border-slate-100 last:border-b-0">
+                    <!-- Header Section Tanggal -->
+                    <div class="bg-slate-100/70 px-4 sm:px-5 py-2 flex items-center justify-between border-y border-slate-200/60">
+                        <span class="text-xs font-bold text-slate-700 tracking-wide">${formatDateIndonesian(dateStr)}</span>
+                        <span class="text-xs font-semibold text-slate-500">Total: ${formatIDR(totalSpentOnDate)}</span>
+                    </div>
+                    <!-- Daftar Transaksi Tanggal Tersebut -->
+                    <div class="divide-y divide-slate-100">
+                        ${txItemsHtml}
                     </div>
                 </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
 
         elements.transactionList.innerHTML = html;
     }
