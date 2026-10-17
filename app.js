@@ -33,10 +33,11 @@ const db = getFirestore(app);
 // === STATE MANAGEMENT ===
 let state = {
     user: null,
-    weeklyBudget: 175000,
+    weeklyBudget: 700000,
     transactions: [],
     filterCategory: 'all',
     searchQuery: '',
+    selectedWeekRange: 'current',
     isRegisterMode: false
 };
 
@@ -62,6 +63,7 @@ const elements = {
     weeklyRemaining: document.getElementById('val-weekly-remaining'),
     weeklyProgress: document.getElementById('bar-weekly-progress'),
     weeklyStatusBadge: document.getElementById('badge-weekly-status'),
+    weeklyTotalSpent: document.getElementById('weekly-total-spent'),
     
     dailyBudget: document.getElementById('val-daily-budget'),
     dailySpent: document.getElementById('val-daily-spent'),
@@ -74,6 +76,7 @@ const elements = {
     transactionList: document.getElementById('transaction-list'),
     emptyState: document.getElementById('empty-state'),
     transactionCount: document.getElementById('transaction-count'),
+    filterWeek: document.getElementById('filter-week'),
     filterCategory: document.getElementById('filter-category'),
     searchInput: document.getElementById('search-input'),
 
@@ -376,15 +379,82 @@ const renderDashboard = () => {
     renderTransactions();
 };
 
-// === RENDER TRANSAKSI (GIFTED WITH SECTION PER HARI) ===
+const populateWeekFilterOptions = () => {
+    if (!elements.filterWeek) return;
+
+    // Ambil semua rentang minggu unik dari seluruh transaksi
+    const weekMap = new Map();
+    const currentWeekRange = getWeekRange(new Date());
+    const currentWeekKey = `${currentWeekRange.startStr}_${currentWeekRange.endStr}`;
+
+    // Masukkan minggu aktif terlebih dahulu
+    weekMap.set(currentWeekKey, {
+        label: `Minggu Ini (${formatShortDate(currentWeekRange.startStr)} - ${formatShortDate(currentWeekRange.endStr)})`,
+        isCurrent: true
+    });
+
+    state.transactions.forEach(tx => {
+        const range = getWeekRange(new Date(tx.date));
+        const key = `${range.startStr}_${range.endStr}`;
+        if (!weekMap.has(key)) {
+            weekMap.set(key, {
+                label: `Minggu ${formatShortDate(range.startStr)} - ${formatShortDate(range.endStr)}`,
+                isCurrent: false
+            });
+        }
+    });
+
+    // Urutkan minggu terbaru ke terlama
+    const sortedKeys = Array.from(weekMap.keys()).sort((a, b) => b.localeCompare(a));
+
+    let optionsHtml = `<option value="current">Minggu Ini (Aktif)</option>`;
+    optionsHtml += `<option value="all">Semua Minggu</option>`;
+
+    sortedKeys.forEach(key => {
+        if (key !== currentWeekKey) {
+            const item = weekMap.get(key);
+            optionsHtml += `<option value="${key}">${item.label}</option>`;
+        }
+    });
+
+    elements.filterWeek.innerHTML = optionsHtml;
+    elements.filterWeek.value = state.selectedWeekRange;
+};
+
+// Helper format tanggal singkat (DD MMM)
+const formatShortDate = (dateStr) => {
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+};
+
 const renderTransactions = () => {
+    populateWeekFilterOptions();
+
+    const currentWeekRange = getWeekRange(new Date());
+
     let filtered = state.transactions.filter(tx => {
         const matchesCategory = state.filterCategory === 'all' || tx.category === state.filterCategory;
         const matchesSearch = tx.title.toLowerCase().includes(state.searchQuery.toLowerCase());
-        return matchesCategory && matchesSearch;
+        
+        let matchesWeek = true;
+        if (state.selectedWeekRange === 'current') {
+            matchesWeek = tx.date >= currentWeekRange.startStr && tx.date <= currentWeekRange.endStr;
+        } else if (state.selectedWeekRange !== 'all') {
+            const [start, end] = state.selectedWeekRange.split('_');
+            matchesWeek = tx.date >= start && tx.date <= end;
+        }
+
+        return matchesCategory && matchesSearch && matchesWeek;
     });
 
+    // Hitung total pengeluaran untuk minggu/filter yang sedang aktif
+    const totalSpentSelectedWeek = filtered.reduce((sum, tx) => sum + Number(tx.amount), 0);
+
+    // Update UI Jumlah Transaksi & Total Pengeluaran Periode Ini
     elements.transactionCount.textContent = `${filtered.length} transaksi`;
+    if (elements.weeklyTotalSpent) {
+        elements.weeklyTotalSpent.textContent = `Total: ${formatIDR(totalSpentSelectedWeek)}`;
+    }
 
     if (filtered.length === 0) {
         elements.transactionList.innerHTML = '';
@@ -435,12 +505,10 @@ const renderTransactions = () => {
 
             return `
                 <div class="border-b border-slate-100 last:border-b-0">
-                    <!-- Header Section Tanggal -->
                     <div class="bg-slate-100/70 px-4 sm:px-5 py-2 flex items-center justify-between border-y border-slate-200/60">
                         <span class="text-xs font-bold text-slate-700 tracking-wide">${formatDateIndonesian(dateStr)}</span>
-                        <span class="text-xs font-semibold text-slate-500">Total: ${formatIDR(totalSpentOnDate)}</span>
+                        <span class="text-xs font-semibold text-slate-500">Total Hari Ini: ${formatIDR(totalSpentOnDate)}</span>
                     </div>
-                    <!-- Daftar Transaksi Tanggal Tersebut -->
                     <div class="divide-y divide-slate-100">
                         ${txItemsHtml}
                     </div>
@@ -452,6 +520,11 @@ const renderTransactions = () => {
     }
     refreshIcons();
 };
+
+elements.filterWeek.addEventListener('change', (e) => {
+    state.selectedWeekRange = e.target.value;
+    renderTransactions();
+});
 
 elements.transactionList.addEventListener('click', (e) => {
     const target = e.target.closest('.btn-action');
