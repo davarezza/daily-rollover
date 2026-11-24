@@ -1,21 +1,21 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { 
-    getAuth, 
-    createUserWithEmailAndPassword, 
-    signInWithEmailAndPassword, 
-    signOut, 
-    onAuthStateChanged 
+import {
+    getAuth,
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-import { 
-    getFirestore, 
-    collection, 
-    doc, 
-    setDoc, 
-    deleteDoc, 
-    onSnapshot 
+import {
+    getFirestore,
+    collection,
+    doc,
+    setDoc,
+    deleteDoc,
+    onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { WORKDAYS, addDays, calculateMetrics, getWeekRange, parseDate, sumAmount, toDateStr } from "./budget.js";
 
-// === FIREBASE CONFIGURATION ===
 const firebaseConfig = {
     apiKey: "AIzaSyDRned2SdcBCoH0Yx-CWW1PMrmQskM8Jp8",
     authDomain: "daily-rollover.firebaseapp.com",
@@ -26,620 +26,427 @@ const firebaseConfig = {
     measurementId: "G-P3SWM1RSXW"
 };
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
 
-// === STATE MANAGEMENT ===
-let state = {
+const DEFAULT_BUDGET = 700000;
+const CATEGORIES = ['Makanan & Minuman', 'Transportasi', 'Belanja', 'Tagihan', 'Hiburan', 'Lainnya'];
+const DAY_LABELS = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum'];
+const BADGE_CLASS = 'px-2 py-0.5 text-xs font-semibold rounded-full';
+
+const TONES = {
+    safe: { label: 'Aman', badge: 'bg-emerald-100 text-emerald-800', bar: 'bg-emerald-500' },
+    warn: { label: 'Mendekati Batas', badge: 'bg-amber-100 text-amber-800', bar: 'bg-amber-500' },
+    over: { label: 'Terlampaui', badge: 'bg-rose-100 text-rose-800', bar: 'bg-rose-500' }
+};
+
+const DAY_CHIPS = {
+    past: 'bg-slate-100 text-slate-400',
+    today: 'bg-indigo-600 text-white',
+    upcoming: 'bg-indigo-50 text-indigo-600 border border-indigo-200'
+};
+
+const AUTH_COPY = {
+    login: {
+        title: 'Masuk ke Daily Rollover',
+        subtitle: 'Kelola budget harian dan mingguan secara terorganisir.',
+        submit: 'Masuk',
+        switchText: 'Belum punya akun?',
+        switchAction: 'Daftar sekarang'
+    },
+    register: {
+        title: 'Daftar Akun Daily Rollover',
+        subtitle: 'Buat akun baru untuk mulai mencatat keuanganmu.',
+        submit: 'Daftar',
+        switchText: 'Sudah punya akun?',
+        switchAction: 'Masuk di sini'
+    }
+};
+
+const AUTH_ERRORS = {
+    'auth/email-already-in-use': 'Email sudah terdaftar',
+    'auth/wrong-password': 'Email atau password salah',
+    'auth/user-not-found': 'Email atau password salah',
+    'auth/invalid-credential': 'Email atau password salah',
+    'auth/weak-password': 'Password minimal 6 karakter'
+};
+
+const state = {
     user: null,
-    weeklyBudget: 700000,
+    weeklyBudget: DEFAULT_BUDGET,
     transactions: [],
     filterCategory: 'all',
     searchQuery: '',
-    selectedWeekRange: 'current',
-    isRegisterMode: false
+    selectedWeek: 'current',
+    registerMode: false
 };
 
-let unsubTx = null;
-let unsubSettings = null;
+let unsubscribers = [];
+let renderedDay = toDateStr(new Date());
 
-// === DOM ELEMENTS ===
-const elements = {
-    authContainer: document.getElementById('auth-container'),
-    appWrapper: document.getElementById('app-wrapper'),
-    formAuth: document.getElementById('form-auth'),
-    authEmail: document.getElementById('auth-email'),
-    authPassword: document.getElementById('auth-password'),
-    authTitle: document.getElementById('auth-title'),
-    authSubtitle: document.getElementById('auth-subtitle'),
-    btnAuthSubmit: document.getElementById('btn-auth-submit'),
-    btnToggleAuth: document.getElementById('btn-toggle-auth'),
-    authSwitchText: document.getElementById('auth-switch-text'),
-    btnLogout: document.getElementById('btn-logout'),
+const camelCase = (id) => id.replace(/-(\w)/g, (_, char) => char.toUpperCase());
+const el = Object.fromEntries(Array.from(document.querySelectorAll('[id]'), (node) => [camelCase(node.id), node]));
 
-    weeklyBudget: document.getElementById('val-weekly-budget'),
-    weeklySpent: document.getElementById('val-weekly-spent'),
-    weeklyRemaining: document.getElementById('val-weekly-remaining'),
-    weeklyProgress: document.getElementById('bar-weekly-progress'),
-    weeklyStatusBadge: document.getElementById('badge-weekly-status'),
-    weeklyTotalSpent: document.getElementById('weekly-total-spent'),
-    
-    dailyBudget: document.getElementById('val-daily-budget'),
-    dailySpent: document.getElementById('val-daily-spent'),
-    dailyRemaining: document.getElementById('val-daily-remaining'),
-    dailyPercentage: document.getElementById('val-daily-percentage'),
-    dailyStatusBadge: document.getElementById('badge-daily-status'),
-    
-    carryOver: document.getElementById('val-carry-over'),
+const formatIDR = (amount) => new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    maximumFractionDigits: 0
+}).format(amount);
 
-    transactionList: document.getElementById('transaction-list'),
-    emptyState: document.getElementById('empty-state'),
-    transactionCount: document.getElementById('transaction-count'),
-    filterWeek: document.getElementById('filter-week'),
-    filterCategory: document.getElementById('filter-category'),
-    searchInput: document.getElementById('search-input'),
-
-    modalTransaction: document.getElementById('modal-transaction'),
-    formTransaction: document.getElementById('form-transaction'),
-    modalTitle: document.getElementById('modal-title'),
-    txId: document.getElementById('tx-id'),
-    txTitle: document.getElementById('tx-title'),
-    txAmount: document.getElementById('tx-amount'),
-    txCategory: document.getElementById('tx-category'),
-    txDate: document.getElementById('tx-date'),
-    
-    modalSettings: document.getElementById('modal-settings'),
-    formSettings: document.getElementById('form-settings'),
-    setWeeklyBudget: document.getElementById('set-weekly-budget'),
-
-    btnOpenAddModal: document.getElementById('btn-open-add-modal'),
-    btnCloseModal: document.getElementById('btn-close-modal'),
-    btnCancelModal: document.getElementById('btn-cancel-modal'),
-    btnOpenSettings: document.getElementById('btn-open-settings'),
-    btnCloseSettings: document.getElementById('btn-close-settings'),
-    btnCancelSettings: document.getElementById('btn-cancel-settings'),
-    
-    toastContainer: document.getElementById('toast-container')
+const formatSigned = (amount) => `${amount < 0 ? '−' : '+'} ${formatIDR(Math.abs(amount))}`;
+const formatDate = (dateStr, options) => parseDate(dateStr).toLocaleDateString('id-ID', options);
+const formatShortRange = (start) => {
+    const short = { day: 'numeric', month: 'short' };
+    return `${formatDate(start, short)} - ${formatDate(toDateStr(addDays(parseDate(start), 6)), short)}`;
 };
 
-// === HELPER FUNCTIONS ===
-const formatIDR = (amount) => {
-    return new Intl.NumberFormat('id-ID', {
-        style: 'currency',
-        currency: 'IDR',
-        maximumFractionDigits: 0
-    }).format(amount);
-};
+const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (char) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]
+));
 
-const getTodayString = () => new Date().toISOString().split('T')[0];
+const optionTags = (values) => values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
+const refreshIcons = () => feather.replace();
+const transactionRef = (id) => doc(db, 'users', state.user.uid, 'transactions', id);
+const settingsRef = (uid) => doc(db, 'users', uid, 'settings', 'user_settings');
 
 const showToast = (message, type = 'success') => {
-    const toast = document.createElement('div');
     const isSuccess = type === 'success';
-    const bgClass = isSuccess ? 'bg-emerald-800' : 'bg-rose-800';
-    const iconName = isSuccess ? 'check-circle' : 'alert-triangle';
-
-    toast.className = `toast-enter pointer-events-auto flex items-center space-x-2 text-white px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${bgClass}`;
-    toast.innerHTML = `<i data-feather="${iconName}" class="w-4 h-4"></i><span>${message}</span>`;
-
-    elements.toastContainer.appendChild(toast);
-    feather.replace();
+    const toast = document.createElement('div');
+    toast.className = `toast-enter pointer-events-auto flex items-center space-x-2 text-white px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${isSuccess ? 'bg-emerald-800' : 'bg-rose-800'}`;
+    toast.innerHTML = `<i data-feather="${isSuccess ? 'check-circle' : 'alert-triangle'}" class="w-4 h-4"></i><span></span>`;
+    toast.lastElementChild.textContent = message;
+    el.toastContainer.append(toast);
+    refreshIcons();
     setTimeout(() => toast.remove(), 3000);
 };
 
-const refreshIcons = () => setTimeout(() => feather.replace(), 0);
-
-const getWeekRange = (d = new Date()) => {
-    const date = new Date(d);
-    const day = date.getDay();
-    const diffToMonday = date.getDate() - day + (day === 0 ? -6 : 1);
-    
-    const monday = new Date(date.setDate(diffToMonday));
-    monday.setHours(0, 0, 0, 0);
-
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    sunday.setHours(23, 59, 59, 999);
-
-    return {
-        startStr: monday.toISOString().split('T')[0],
-        endStr: sunday.toISOString().split('T')[0]
-    };
+const getTone = (spent, limit) => {
+    const ratio = limit > 0 ? spent / limit : Number(spent > 0) * 2;
+    if (ratio > 1) return TONES.over;
+    return ratio >= 0.8 ? TONES.warn : TONES.safe;
 };
 
-const isWeekday = (dateString) => {
-    const day = new Date(dateString).getDay();
-    return day >= 1 && day <= 5;
+const setBadge = (node, tone) => {
+    node.className = `${BADGE_CLASS} ${tone.badge}`;
+    node.textContent = tone.label;
 };
 
-// === AUTHENTICATION LOGIC ===
-onAuthStateChanged(auth, (user) => {
-    state.user = user;
-    if (user) {
-        elements.authContainer.classList.add('hidden');
-        elements.appWrapper.classList.remove('hidden');
-        elements.appWrapper.classList.add('flex');
-        initUserRealtimeSync(user.uid);
+const setAmount = (node, amount, positiveColor) => {
+    node.textContent = formatIDR(amount);
+    node.className = `text-2xl font-bold ${amount < 0 ? 'text-rose-600' : positiveColor}`;
+};
+
+const renderTodayBanner = (metrics) => {
+    el.todayDate.textContent = formatDate(metrics.today, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+    if (!metrics.isWorkday) {
+        el.todayContext.textContent = 'Akhir pekan · libur budget, jatah harian dimulai lagi hari Senin';
     } else {
-        if (unsubTx) unsubTx();
-        if (unsubSettings) unsubSettings();
-        elements.appWrapper.classList.add('hidden');
-        elements.appWrapper.classList.remove('flex');
-        elements.authContainer.classList.remove('hidden');
+        const remaining = metrics.remainingWorkdays
+            ? `${metrics.remainingWorkdays} hari kerja tersisa setelah hari ini`
+            : 'hari kerja terakhir minggu ini';
+        el.todayContext.textContent = `Hari kerja ke-${metrics.workdayNumber} dari ${WORKDAYS} · ${remaining}`;
     }
-});
 
-elements.btnToggleAuth.addEventListener('click', () => {
-    state.isRegisterMode = !state.isRegisterMode;
-    if (state.isRegisterMode) {
-        elements.authTitle.textContent = "Daftar Akun HematKu";
-        elements.authSubtitle.textContent = "Buat akun baru untuk mulai mencatat keuanganmu.";
-        elements.btnAuthSubmit.textContent = "Daftar";
-        elements.authSwitchText.textContent = "Sudah punya akun?";
-        elements.btnToggleAuth.textContent = "Masuk di sini";
-    } else {
-        elements.authTitle.textContent = "Masuk ke HematKu";
-        elements.authSubtitle.textContent = "Kelola budget harian dan mingguan secara terorganisir.";
-        elements.btnAuthSubmit.textContent = "Masuk";
-        elements.authSwitchText.textContent = "Belum punya akun?";
-        elements.btnToggleAuth.textContent = "Daftar sekarang";
-    }
-});
-
-elements.formAuth.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = elements.authEmail.value.trim();
-    const password = elements.authPassword.value;
-
-    try {
-        if (state.isRegisterMode) {
-            await createUserWithEmailAndPassword(auth, email, password);
-            showToast('Akun berhasil dibuat!');
-        } else {
-            await signInWithEmailAndPassword(auth, email, password);
-            showToast('Berhasil masuk!');
-        }
-    } catch (error) {
-        let msg = 'Terjadi kesalahan autentikasi';
-        if (error.code === 'auth/email-already-in-use') msg = 'Email sudah terdaftar';
-        if (error.code === 'auth/wrong-password' || error.code === 'auth/user-not-found') msg = 'Email atau password salah';
-        if (error.code === 'auth/weak-password') msg = 'Password minimal 6 karakter';
-        showToast(msg, 'error');
-    }
-});
-
-elements.btnLogout.addEventListener('click', () => signOut(auth));
-
-// === REALTIME SYNC (PER USER) ===
-const initUserRealtimeSync = (uid) => {
-    const userTxRef = collection(db, "users", uid, "transactions");
-    const userSettingsRef = doc(db, "users", uid, "settings", "user_settings");
-
-    unsubTx = onSnapshot(userTxRef, (snapshot) => {
-        state.transactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        renderDashboard();
-    });
-
-    unsubSettings = onSnapshot(userSettingsRef, (docSnap) => {
-        if (docSnap.exists()) {
-            state.weeklyBudget = docSnap.data().weeklyBudget || 700000;
-            renderDashboard();
-        }
-    });
+    el.weekDays.innerHTML = metrics.workdays.map((day, index) => {
+        const status = day < metrics.today ? 'past' : day === metrics.today ? 'today' : 'upcoming';
+        return `
+            <li class="w-12 py-1.5 text-center text-xs font-semibold rounded-lg ${DAY_CHIPS[status]}">
+                ${DAY_LABELS[index]}
+                <span class="block text-[10px] font-normal">${parseDate(day).getDate()}</span>
+            </li>`;
+    }).join('');
 };
 
-// === HELPER FORMAT TANGGAL INDONESIA ===
-const formatDateIndonesian = (dateString) => {
-    const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-    const date = new Date(dateString + 'T00:00:00');
-    return date.toLocaleDateString('id-ID', options);
-};
-
-// === KALKULASI BUDGET METRICS ===
-const calculateBudgetMetrics = () => {
-    const today = new Date();
-    const todayStr = getTodayString();
-    const isTodayWeekday = isWeekday(todayStr);
-
-    const { startStr, endStr } = getWeekRange(today);
-
-    // 1. Filter Transaksi Minggu Ini & Lalu
-    const currentWeekTransactions = state.transactions.filter(tx => 
-        tx.date >= startStr && tx.date <= endStr
-    );
-    const pastTransactions = state.transactions.filter(tx => tx.date < startStr);
-
-    // 2. Transaksi & Sisa Budget Mingguan
-    const totalWeeklySpent = currentWeekTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
-    const weeklyRemaining = state.weeklyBudget - totalWeeklySpent;
-
-    // 3. All-Time Weekly Carry-Over (Minggu-Minggu Lalu)
-    const pastWeeksSet = new Set();
-    pastTransactions.forEach(tx => {
-        const { startStr: weekStart } = getWeekRange(new Date(tx.date));
-        pastWeeksSet.add(weekStart);
-    });
-
-    const totalPastWeeklyAllocated = pastWeeksSet.size * state.weeklyBudget;
-    const totalPastWeeklySpent = pastTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
-    const weeklyCarryOver = totalPastWeeklyAllocated - totalPastWeeklySpent;
-
-    // 4. Budget Dasar Harian (Weekday)
-    const baseDailyBudget = Math.round(state.weeklyBudget / 5);
-
-    // Pengeluaran Murni Hari Ini
-    const todaySpent = currentWeekTransactions
-        .filter(tx => tx.date === todayStr)
-        .reduce((sum, tx) => sum + Number(tx.amount), 0);
-
-    // Hitung Carry-Over Harian Minggu Aktif (Senin s/d Kemarin)
-    let pastWeekdaysSpent = 0;
-    let pastWeekdaysCount = 0;
-
-    const curr = new Date(startStr);
-    const target = new Date(todayStr);
-
-    while (curr < target) {
-        const dateStr = curr.toISOString().split('T')[0];
-        if (isWeekday(dateStr)) {
-            pastWeekdaysCount++;
-            const spentOnDay = currentWeekTransactions
-                .filter(tx => tx.date === dateStr)
-                .reduce((sum, tx) => sum + Number(tx.amount), 0);
-            pastWeekdaysSpent += spentOnDay;
-        }
-        curr.setDate(curr.getDate() + 1);
-    }
-
-    const dailyCarryOver = (pastWeekdaysCount * baseDailyBudget) - pastWeekdaysSpent;
-    
-    // Target murni hari ini & sisa efektif harian
-    const rawDailyTarget = isTodayWeekday ? baseDailyBudget : 0;
-    const effectiveDailyBudget = isTodayWeekday ? (baseDailyBudget + dailyCarryOver) : 0;
-    const dailyRemaining = effectiveDailyBudget - todaySpent;
-
-    return {
-        weeklyBudget: state.weeklyBudget,
-        weeklySpent: totalWeeklySpent,
-        weeklyRemaining: weeklyRemaining,
-        weeklyCarryOver: isNaN(weeklyCarryOver) ? 0 : weeklyCarryOver,
-        dailyTarget: rawDailyTarget,               // Target murni harian
-        dailyBudgetEffective: effectiveDailyBudget,// Target + Carry Over
-        dailySpent: todaySpent,                    // Pengeluaran hari ini
-        dailyRemaining: dailyRemaining,            // Sisa hari ini
-        dailyCarryOver: isNaN(dailyCarryOver) ? 0 : dailyCarryOver,
-        isTodayWeekday: isTodayWeekday
-    };
-};
-
-const updateStatusBadge = (badgeEl, value, limit) => {
-    const ratio = limit > 0 ? (value / limit) : 0;
-    if (value < 0 || ratio > 1) {
-        badgeEl.className = 'px-2 py-0.5 text-xs font-semibold rounded-full bg-rose-100 text-rose-800';
-        badgeEl.textContent = 'Terlampaui';
-    } else if (ratio >= 0.8) {
-        badgeEl.className = 'px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-800';
-        badgeEl.textContent = 'Mendekati Batas';
-    } else {
-        badgeEl.className = 'px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800';
-        badgeEl.textContent = 'Aman';
-    }
-};
-
-// === RENDER DASHBOARD ===
 const renderDashboard = () => {
-    const metrics = calculateBudgetMetrics();
-
-    // 1. Metric Mingguan
-    elements.weeklyBudget.textContent = formatIDR(metrics.weeklyBudget);
-    elements.weeklySpent.textContent = formatIDR(metrics.weeklySpent);
-    elements.weeklyRemaining.textContent = formatIDR(metrics.weeklyRemaining);
-    elements.weeklyRemaining.className = `text-2xl font-bold ${metrics.weeklyRemaining < 0 ? 'text-rose-600' : 'text-emerald-600'}`;
-    
-    const weeklyPercentage = Math.min(Math.round((metrics.weeklySpent / metrics.weeklyBudget) * 100) || 0, 100);
-    elements.weeklyProgress.style.width = `${weeklyPercentage}%`;
-    elements.weeklyProgress.className = `h-2 rounded-full transition-all duration-300 ${weeklyPercentage >= 100 ? 'bg-rose-500' : weeklyPercentage >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`;
-    
-    updateStatusBadge(elements.weeklyStatusBadge, metrics.weeklySpent, metrics.weeklyBudget);
-
-    // 2. Target Hari Ini (Murni) & Pengeluaran Hari Ini
-    if (!metrics.isTodayWeekday) {
-        elements.dailyBudget.textContent = "Weekend (Rp 0)";
-        elements.dailyPercentage.textContent = "Hari Libur Budget";
-    } else {
-        elements.dailyBudget.textContent = formatIDR(metrics.dailyTarget);
-    }
-    elements.dailySpent.textContent = formatIDR(metrics.dailySpent);
-
-    // 3. Sisa Hari Ini (Sisa Efektif dari Target + Carry Over)
-    elements.dailyRemaining.textContent = formatIDR(metrics.dailyRemaining);
-    elements.dailyRemaining.className = `text-2xl font-bold ${metrics.dailyRemaining < 0 ? 'text-rose-600' : 'text-emerald-600'}`;
-
-    const dailyUsedPercent = metrics.dailyBudgetEffective > 0 
-        ? Math.round((metrics.dailySpent / metrics.dailyBudgetEffective) * 100) 
+    const metrics = calculateMetrics(state.transactions, state.weeklyBudget);
+    const weeklyTone = getTone(metrics.weeklySpent, metrics.weeklyBudget);
+    const dailyTone = getTone(metrics.dailySpent, metrics.dailyLimit);
+    const weeklyPercent = metrics.weeklyBudget > 0
+        ? Math.min(Math.round((metrics.weeklySpent / metrics.weeklyBudget) * 100), 100)
         : 0;
-    
-    if (metrics.isTodayWeekday) {
-        elements.dailyPercentage.textContent = `${dailyUsedPercent}% terpakai`;
+    const dailyPercent = metrics.dailyLimit > 0 ? Math.round((metrics.dailySpent / metrics.dailyLimit) * 100) : 0;
+
+    renderTodayBanner(metrics);
+
+    el.valWeeklyBudget.textContent = formatIDR(metrics.weeklyBudget);
+    el.valWeeklySpent.textContent = formatIDR(metrics.weeklySpent);
+    setAmount(el.valWeeklyRemaining, metrics.weeklyRemaining, 'text-emerald-600');
+    setBadge(el.badgeWeeklyStatus, weeklyTone);
+    el.barWeeklyProgress.style.width = `${weeklyPercent}%`;
+    el.barWeeklyProgress.className = `h-2 rounded-full transition-all duration-300 ${weeklyTone.bar}`;
+    el.valSpendLimit.textContent = metrics.isWorkday ? formatIDR(Math.max(metrics.spendLimit, 0)) : 'Libur budget';
+
+    el.valDailyTarget.textContent = formatIDR(metrics.dailyTarget);
+    el.txtDailyTargetNote.textContent = metrics.isWorkday
+        ? `Budget mingguan ÷ ${WORKDAYS} hari kerja`
+        : 'Akhir pekan tidak mendapat jatah harian';
+
+    setAmount(el.valDailyRemaining, metrics.dailyRemaining, 'text-emerald-600');
+    setBadge(el.badgeDailyStatus, dailyTone);
+    el.formulaTarget.textContent = formatSigned(metrics.dailyTarget);
+    el.formulaCarry.textContent = formatSigned(metrics.dailyLimit - metrics.dailyTarget);
+    el.formulaSpent.textContent = `− ${formatIDR(metrics.dailySpent)} (${dailyPercent}%)`;
+
+    setAmount(el.valCarryOver, metrics.dailyCarryOver, 'text-indigo-600');
+    setAmount(el.valWeeklyCarryOver, metrics.weeklyCarryOver, 'text-indigo-600');
+};
+
+const resolveWeek = (selection) => {
+    if (selection === 'all') return null;
+    const currentStart = getWeekRange().start;
+    const start = selection === 'current' ? currentStart
+        : selection === 'last' ? toDateStr(addDays(parseDate(currentStart), -7))
+        : selection;
+    return { start, end: toDateStr(addDays(parseDate(start), 6)) };
+};
+
+const renderWeekOptions = () => {
+    const currentStart = getWeekRange().start;
+    const lastStart = toDateStr(addDays(parseDate(currentStart), -7));
+    const olderStarts = [...new Set(state.transactions.map((tx) => getWeekRange(parseDate(tx.date)).start))]
+        .filter((start) => start < lastStart)
+        .sort()
+        .reverse();
+
+    const options = [
+        ['current', `Minggu Ini (${formatShortRange(currentStart)})`],
+        ['last', `Minggu Lalu (${formatShortRange(lastStart)})`],
+        ['all', 'Semua Minggu'],
+        ...olderStarts.map((start) => [start, `Minggu ${formatShortRange(start)}`])
+    ];
+
+    el.filterWeek.innerHTML = options.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+    el.filterWeek.value = state.selectedWeek;
+    if (el.filterWeek.value !== state.selectedWeek) {
+        state.selectedWeek = 'current';
+        el.filterWeek.value = 'current';
     }
-
-    updateStatusBadge(elements.dailyStatusBadge, metrics.dailySpent, metrics.dailyBudgetEffective);
-
-    // 4. Carry-Over Cards
-    elements.carryOver.textContent = formatIDR(metrics.dailyCarryOver);
-    elements.carryOver.className = `text-2xl font-bold ${metrics.dailyCarryOver < 0 ? 'text-rose-600' : 'text-indigo-600'}`;
-
-    const weeklyCarryEl = document.getElementById('val-weekly-carry-over');
-    if (weeklyCarryEl) {
-        weeklyCarryEl.textContent = formatIDR(metrics.weeklyCarryOver);
-        weeklyCarryEl.className = `text-2xl font-bold ${metrics.weeklyCarryOver < 0 ? 'text-rose-600' : 'text-indigo-600'}`;
-    }
-
-    renderTransactions();
 };
 
-const populateWeekFilterOptions = () => {
-    if (!elements.filterWeek) return;
+const transactionRow = (tx) => `
+    <div class="p-4 sm:px-5 flex items-center justify-between hover:bg-slate-50/80 transition-colors">
+        <div class="flex items-center space-x-3.5 min-w-0">
+            <div class="p-2.5 bg-slate-100 text-slate-600 rounded-lg shrink-0">
+                <i data-feather="tag" class="w-4 h-4"></i>
+            </div>
+            <div class="min-w-0">
+                <p class="text-sm font-semibold text-slate-900 truncate">${escapeHtml(tx.title)}</p>
+                <span class="inline-block bg-slate-100 px-2 py-0.5 rounded text-xs text-slate-600 font-medium mt-0.5">${escapeHtml(tx.category)}</span>
+            </div>
+        </div>
+        <div class="flex items-center space-x-3 shrink-0 ml-3">
+            <span class="text-sm font-bold text-slate-900">${formatIDR(tx.amount)}</span>
+            <div class="flex items-center space-x-1">
+                <button data-action="edit" data-id="${escapeHtml(tx.id)}" aria-label="Edit transaksi" class="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100">
+                    <i data-feather="edit-2" class="w-4 h-4 pointer-events-none"></i>
+                </button>
+                <button data-action="delete" data-id="${escapeHtml(tx.id)}" aria-label="Hapus transaksi" class="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100">
+                    <i data-feather="trash-2" class="w-4 h-4 pointer-events-none"></i>
+                </button>
+            </div>
+        </div>
+    </div>`;
 
-    // Ambil semua rentang minggu unik dari seluruh transaksi
-    const weekMap = new Map();
-    const currentWeekRange = getWeekRange(new Date());
-    const currentWeekKey = `${currentWeekRange.startStr}_${currentWeekRange.endStr}`;
+const dayGroup = (date, transactions) => `
+    <div>
+        <div class="bg-slate-100/70 px-4 sm:px-5 py-2 flex items-center justify-between border-y border-slate-200/60">
+            <span class="text-xs font-bold text-slate-700 tracking-wide">${formatDate(date, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+            <span class="text-xs font-semibold text-slate-500">Total: ${formatIDR(sumAmount(transactions))}</span>
+        </div>
+        <div class="divide-y divide-slate-100">${transactions.map(transactionRow).join('')}</div>
+    </div>`;
 
-    // Masukkan minggu aktif terlebih dahulu
-    weekMap.set(currentWeekKey, {
-        label: `Minggu Ini (${formatShortDate(currentWeekRange.startStr)} - ${formatShortDate(currentWeekRange.endStr)})`,
-        isCurrent: true
-    });
-
-    state.transactions.forEach(tx => {
-        const range = getWeekRange(new Date(tx.date));
-        const key = `${range.startStr}_${range.endStr}`;
-        if (!weekMap.has(key)) {
-            weekMap.set(key, {
-                label: `Minggu ${formatShortDate(range.startStr)} - ${formatShortDate(range.endStr)}`,
-                isCurrent: false
-            });
-        }
-    });
-
-    // Urutkan minggu terbaru ke terlama
-    const sortedKeys = Array.from(weekMap.keys()).sort((a, b) => b.localeCompare(a));
-
-    let optionsHtml = `<option value="current">Minggu Ini (Aktif)</option>`;
-    optionsHtml += `<option value="all">Semua Minggu</option>`;
-
-    sortedKeys.forEach(key => {
-        if (key !== currentWeekKey) {
-            const item = weekMap.get(key);
-            optionsHtml += `<option value="${key}">${item.label}</option>`;
-        }
-    });
-
-    elements.filterWeek.innerHTML = optionsHtml;
-    elements.filterWeek.value = state.selectedWeekRange;
-};
-
-// Helper format tanggal singkat (DD MMM)
-const formatShortDate = (dateStr) => {
-    const d = new Date(dateStr + 'T00:00:00');
-    return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
-};
+const groupByDate = (transactions) => transactions.reduce((groups, tx) => {
+    (groups[tx.date] ||= []).push(tx);
+    return groups;
+}, {});
 
 const renderTransactions = () => {
-    populateWeekFilterOptions();
+    const week = resolveWeek(state.selectedWeek);
+    const query = state.searchQuery.trim().toLowerCase();
+    const filtered = state.transactions.filter((tx) =>
+        (state.filterCategory === 'all' || tx.category === state.filterCategory)
+        && tx.title.toLowerCase().includes(query)
+        && (!week || (tx.date >= week.start && tx.date <= week.end))
+    );
+    const groups = groupByDate(filtered);
 
-    const currentWeekRange = getWeekRange(new Date());
-
-    let filtered = state.transactions.filter(tx => {
-        const matchesCategory = state.filterCategory === 'all' || tx.category === state.filterCategory;
-        const matchesSearch = tx.title.toLowerCase().includes(state.searchQuery.toLowerCase());
-        
-        let matchesWeek = true;
-        if (state.selectedWeekRange === 'current') {
-            matchesWeek = tx.date >= currentWeekRange.startStr && tx.date <= currentWeekRange.endStr;
-        } else if (state.selectedWeekRange !== 'all') {
-            const [start, end] = state.selectedWeekRange.split('_');
-            matchesWeek = tx.date >= start && tx.date <= end;
-        }
-
-        return matchesCategory && matchesSearch && matchesWeek;
-    });
-
-    // Hitung total pengeluaran untuk minggu/filter yang sedang aktif
-    const totalSpentSelectedWeek = filtered.reduce((sum, tx) => sum + Number(tx.amount), 0);
-
-    // Update UI Jumlah Transaksi & Total Pengeluaran Periode Ini
-    elements.transactionCount.textContent = `${filtered.length} transaksi`;
-    if (elements.weeklyTotalSpent) {
-        elements.weeklyTotalSpent.textContent = `Total: ${formatIDR(totalSpentSelectedWeek)}`;
-    }
-
-    if (filtered.length === 0) {
-        elements.transactionList.innerHTML = '';
-        elements.transactionList.appendChild(elements.emptyState);
-        elements.emptyState.classList.remove('hidden');
-    } else {
-        elements.emptyState.classList.add('hidden');
-
-        // Grouping transaksi per tanggal
-        const grouped = filtered.reduce((groups, tx) => {
-            const date = tx.date;
-            if (!groups[date]) groups[date] = [];
-            groups[date].push(tx);
-            return groups;
-        }, {});
-
-        // Sort tanggal terbaru di atas
-        const sortedDates = Object.keys(grouped).sort((a, b) => new Date(b) - new Date(a));
-
-        const html = sortedDates.map(dateStr => {
-            const txs = grouped[dateStr];
-            const totalSpentOnDate = txs.reduce((sum, t) => sum + Number(t.amount), 0);
-
-            const txItemsHtml = txs.map(tx => `
-                <div class="p-4 sm:px-5 flex items-center justify-between hover:bg-slate-50/80 transition-colors">
-                    <div class="flex items-center space-x-3.5 min-w-0">
-                        <div class="p-2.5 bg-slate-100 text-slate-600 rounded-lg shrink-0">
-                            <i data-feather="tag" class="w-4 h-4"></i>
-                        </div>
-                        <div class="min-w-0">
-                            <p class="text-sm font-semibold text-slate-900 truncate">${tx.title}</p>
-                            <span class="inline-block bg-slate-100 px-2 py-0.5 rounded text-xs text-slate-600 font-medium mt-0.5">${tx.category}</span>
-                        </div>
-                    </div>
-                    <div class="flex items-center space-x-3 shrink-0 ml-3">
-                        <span class="text-sm font-bold text-slate-900">${formatIDR(tx.amount)}</span>
-                        <div class="flex items-center space-x-1">
-                            <button data-action="edit" data-id="${tx.id}" aria-label="Edit transaksi" class="btn-action p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100">
-                                <i data-feather="edit-2" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
-                            <button data-action="delete" data-id="${tx.id}" aria-label="Hapus transaksi" class="btn-action p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100">
-                                <i data-feather="trash-2" class="w-4 h-4 pointer-events-none"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-
-            return `
-                <div class="border-b border-slate-100 last:border-b-0">
-                    <div class="bg-slate-100/70 px-4 sm:px-5 py-2 flex items-center justify-between border-y border-slate-200/60">
-                        <span class="text-xs font-bold text-slate-700 tracking-wide">${formatDateIndonesian(dateStr)}</span>
-                        <span class="text-xs font-semibold text-slate-500">Total Hari Ini: ${formatIDR(totalSpentOnDate)}</span>
-                    </div>
-                    <div class="divide-y divide-slate-100">
-                        ${txItemsHtml}
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        elements.transactionList.innerHTML = html;
-    }
+    el.transactionCount.textContent = `${filtered.length} transaksi`;
+    el.weeklyTotalSpent.textContent = `Total: ${formatIDR(sumAmount(filtered))}`;
+    el.emptyState.classList.toggle('hidden', filtered.length > 0);
+    el.transactionList.innerHTML = Object.keys(groups).sort().reverse().map((date) => dayGroup(date, groups[date])).join('');
     refreshIcons();
 };
 
-elements.filterWeek.addEventListener('change', (e) => {
-    state.selectedWeekRange = e.target.value;
+const render = () => {
+    renderedDay = toDateStr(new Date());
+    renderDashboard();
+    renderWeekOptions();
     renderTransactions();
-});
+    refreshIcons();
+};
 
-elements.transactionList.addEventListener('click', (e) => {
-    const target = e.target.closest('.btn-action');
-    if (!target) return;
-    const action = target.getAttribute('data-action');
-    const id = target.getAttribute('data-id');
+const subscribeToUserData = (uid) => {
+    const onError = () => showToast('Gagal menyinkronkan data', 'error');
+    return [
+        onSnapshot(collection(db, 'users', uid, 'transactions'), (snapshot) => {
+            state.transactions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+            render();
+        }, onError),
+        onSnapshot(settingsRef(uid), (snapshot) => {
+            state.weeklyBudget = snapshot.data()?.weeklyBudget ?? DEFAULT_BUDGET;
+            render();
+        }, onError)
+    ];
+};
 
-    if (action === 'edit') editTransaction(id);
-    if (action === 'delete') deleteTransaction(id);
-});
+const renderAuthMode = () => {
+    const copy = AUTH_COPY[state.registerMode ? 'register' : 'login'];
+    el.authTitle.textContent = copy.title;
+    el.authSubtitle.textContent = copy.subtitle;
+    el.btnAuthSubmit.textContent = copy.submit;
+    el.authSwitchText.textContent = copy.switchText;
+    el.btnToggleAuth.textContent = copy.switchAction;
+};
 
-// === MODAL CONTROLS & EVENT HANDLERS ===
 const openModal = (modal) => modal.classList.remove('hidden');
 const closeModal = (modal) => modal.classList.add('hidden');
 
-const resetTransactionForm = () => {
-    elements.txId.value = '';
-    elements.txTitle.value = '';
-    elements.txAmount.value = '';
-    elements.txCategory.value = 'Makanan & Minuman';
-    elements.txDate.value = getTodayString();
-    elements.modalTitle.textContent = 'Tambah Transaksi';
+const openTransactionModal = (tx) => {
+    el.txId.value = tx?.id ?? '';
+    el.txTitle.value = tx?.title ?? '';
+    el.txAmount.value = tx?.amount ?? '';
+    el.txCategory.value = tx?.category ?? CATEGORIES[0];
+    el.txDate.value = tx?.date ?? toDateStr(new Date());
+    el.modalTitle.textContent = tx ? 'Edit Transaksi' : 'Tambah Transaksi';
+    openModal(el.modalTransaction);
 };
 
-elements.formTransaction.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (!state.user) return;
+const deleteTransaction = async (id) => {
+    if (!confirm('Apakah Anda yakin ingin menghapus transaksi ini?')) return;
+    try {
+        await deleteDoc(transactionRef(id));
+        showToast('Transaksi dihapus');
+    } catch {
+        showToast('Gagal menghapus', 'error');
+    }
+};
 
-    const id = elements.txId.value || Date.now().toString();
-    const title = elements.txTitle.value.trim();
-    const amount = Number(elements.txAmount.value);
-    const category = elements.txCategory.value;
-    const date = elements.txDate.value;
+onAuthStateChanged(auth, (user) => {
+    state.user = user;
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+    unsubscribers = user ? subscribeToUserData(user.uid) : [];
+    if (!user) {
+        Object.assign(state, { transactions: [], weeklyBudget: DEFAULT_BUDGET });
+    }
+    el.authContainer.classList.toggle('hidden', Boolean(user));
+    el.appWrapper.classList.toggle('hidden', !user);
+    el.appWrapper.classList.toggle('flex', Boolean(user));
+});
+
+el.formAuth.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const email = el.authEmail.value.trim();
+    const password = el.authPassword.value;
+    const authenticate = state.registerMode ? createUserWithEmailAndPassword : signInWithEmailAndPassword;
+
+    el.btnAuthSubmit.disabled = true;
+    try {
+        await authenticate(auth, email, password);
+        showToast(state.registerMode ? 'Akun berhasil dibuat!' : 'Berhasil masuk!');
+    } catch (error) {
+        showToast(AUTH_ERRORS[error.code] ?? 'Terjadi kesalahan autentikasi', 'error');
+    } finally {
+        el.btnAuthSubmit.disabled = false;
+    }
+});
+
+el.btnToggleAuth.addEventListener('click', () => {
+    state.registerMode = !state.registerMode;
+    renderAuthMode();
+});
+
+el.btnLogout.addEventListener('click', () => signOut(auth));
+
+el.formTransaction.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const isEdit = Boolean(el.txId.value);
+    const id = el.txId.value || Date.now().toString();
 
     try {
-        await setDoc(doc(db, "users", state.user.uid, "transactions", id), {
-            title, amount, category, date
+        await setDoc(transactionRef(id), {
+            title: el.txTitle.value.trim(),
+            amount: Number(el.txAmount.value),
+            category: el.txCategory.value,
+            date: el.txDate.value
         });
-        showToast(elements.txId.value ? 'Transaksi diperbarui' : 'Transaksi ditambahkan');
-        closeModal(elements.modalTransaction);
-    } catch (error) {
+        showToast(isEdit ? 'Transaksi diperbarui' : 'Transaksi ditambahkan');
+        closeModal(el.modalTransaction);
+    } catch {
         showToast('Gagal menyimpan transaksi', 'error');
     }
 });
 
-const editTransaction = (id) => {
-    const tx = state.transactions.find(t => t.id === id);
-    if (tx) {
-        elements.txId.value = tx.id;
-        elements.txTitle.value = tx.title;
-        elements.txAmount.value = tx.amount;
-        elements.txCategory.value = tx.category;
-        elements.txDate.value = tx.date;
-        elements.modalTitle.textContent = 'Edit Transaksi';
-        openModal(elements.modalTransaction);
-    }
-};
+el.formSettings.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const weeklyBudget = Number(el.setWeeklyBudget.value);
+    if (!Number.isFinite(weeklyBudget) || weeklyBudget < 0) return;
 
-const deleteTransaction = async (id) => {
-    if (!state.user) return;
-    if (confirm('Apakah Anda yakin ingin menghapus transaksi ini?')) {
-        try {
-            await deleteDoc(doc(db, "users", state.user.uid, "transactions", id));
-            showToast('Transaksi dihapus');
-        } catch (error) {
-            showToast('Gagal menghapus', 'error');
-        }
-    }
-};
-
-elements.formSettings.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (!state.user) return;
-    const newBudget = Number(elements.setWeeklyBudget.value);
-
-    if (newBudget >= 0) {
-        try {
-            await setDoc(doc(db, "users", state.user.uid, "settings", "user_settings"), {
-                weeklyBudget: newBudget
-            });
-            closeModal(elements.modalSettings);
-            showToast('Pengaturan disimpan');
-        } catch (error) {
-            showToast('Gagal menyimpan pengaturan', 'error');
-        }
+    try {
+        await setDoc(settingsRef(state.user.uid), { weeklyBudget });
+        closeModal(el.modalSettings);
+        showToast('Pengaturan disimpan');
+    } catch {
+        showToast('Gagal menyimpan pengaturan', 'error');
     }
 });
 
-elements.btnOpenAddModal.addEventListener('click', () => {
-    resetTransactionForm();
-    openModal(elements.modalTransaction);
+el.transactionList.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-action]');
+    if (!button) return;
+    const { action, id } = button.dataset;
+    if (action === 'edit') openTransactionModal(state.transactions.find((tx) => tx.id === id));
+    if (action === 'delete') deleteTransaction(id);
 });
 
-elements.btnCloseModal.addEventListener('click', () => closeModal(elements.modalTransaction));
-elements.btnCancelModal.addEventListener('click', () => closeModal(elements.modalTransaction));
+el.btnOpenAddModal.addEventListener('click', () => openTransactionModal());
 
-elements.btnOpenSettings.addEventListener('click', () => {
-    elements.setWeeklyBudget.value = state.weeklyBudget;
-    openModal(elements.modalSettings);
+el.btnOpenSettings.addEventListener('click', () => {
+    el.setWeeklyBudget.value = state.weeklyBudget;
+    openModal(el.modalSettings);
 });
 
-elements.btnCloseSettings.addEventListener('click', () => closeModal(elements.modalSettings));
-elements.btnCancelSettings.addEventListener('click', () => closeModal(elements.modalSettings));
+document.addEventListener('click', (event) => {
+    const modal = event.target.closest('[data-close]')?.closest('.modal')
+        ?? (event.target.classList.contains('modal') ? event.target : null);
+    if (modal) closeModal(modal);
+});
 
-elements.filterCategory.addEventListener('change', (e) => {
-    state.filterCategory = e.target.value;
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') document.querySelectorAll('.modal').forEach(closeModal);
+});
+
+el.filterWeek.addEventListener('change', (event) => {
+    state.selectedWeek = event.target.value;
     renderTransactions();
 });
 
-elements.searchInput.addEventListener('input', (e) => {
-    state.searchQuery = e.target.value;
+el.filterCategory.addEventListener('change', (event) => {
+    state.filterCategory = event.target.value;
     renderTransactions();
 });
 
-window.addEventListener('click', (e) => {
-    if (e.target === elements.modalTransaction) closeModal(elements.modalTransaction);
-    if (e.target === elements.modalSettings) closeModal(elements.modalSettings);
+el.searchInput.addEventListener('input', (event) => {
+    state.searchQuery = event.target.value;
+    renderTransactions();
 });
+
+setInterval(() => {
+    if (state.user && toDateStr(new Date()) !== renderedDay) render();
+}, 60000);
+
+el.txCategory.innerHTML = optionTags(CATEGORIES);
+el.filterCategory.innerHTML = `<option value="all">Semua Kategori</option>${optionTags(CATEGORIES)}`;
+refreshIcons();
