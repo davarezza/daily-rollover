@@ -4,8 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Daily Rollover - Budget Harian & Mingguan</title>
+    <script>
+        try {
+            const saved = localStorage.getItem('theme');
+            document.documentElement.dataset.theme = saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        } catch {
+            document.documentElement.dataset.theme = 'light';
+        }
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/feather-icons"></script>
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#4f46e5">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Rollover">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" href="icons/icon-192.png">
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen antialiased flex flex-col">
@@ -14,7 +29,7 @@
         <div class="card shadow-lg w-full max-w-md p-6 space-y-5">
             <div class="text-center space-y-2">
                 <div class="inline-flex p-3 bg-indigo-50 text-indigo-600 rounded-xl mb-1">
-                    <i data-feather="wallet" class="w-8 h-8"></i>
+                    <i data-feather="repeat" class="w-8 h-8"></i>
                 </div>
                 <h2 id="auth-title" class="text-xl font-bold text-slate-900">Masuk ke Daily Rollover</h2>
                 <p id="auth-subtitle" class="text-xs text-slate-500">Kelola budget harian dan mingguan secara terorganisir.</p>
@@ -40,16 +55,25 @@
     </div>
 
     <div id="app-wrapper" class="hidden flex-col min-h-screen">
+        <div id="offline-bar" hidden class="bg-amber-100 text-amber-800 text-xs font-medium text-center py-1.5 px-4">Offline · perubahan akan disinkronkan saat kembali online</div>
         <header class="bg-white border-b border-slate-200 sticky top-0 z-20">
             <div class="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
                 <div class="flex items-center space-x-3">
                     <div class="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                        <i data-feather="wallet" class="w-6 h-6"></i>
+                        <i data-feather="repeat" class="w-6 h-6"></i>
                     </div>
                     <h1 class="text-xl font-bold text-slate-900 tracking-tight">Daily Rollover</h1>
                 </div>
 
                 <div class="flex items-center space-x-2">
+                    <button id="btn-install-header" hidden aria-label="Pasang aplikasi" class="inline-flex items-center space-x-2 text-sm font-medium text-indigo-600 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">
+                        <i data-feather="download" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline">Pasang</span>
+                    </button>
+                    <button id="btn-theme" aria-label="Ganti tema terang/gelap" class="inline-flex items-center text-slate-600 hover:text-indigo-600 p-2 rounded-lg hover:bg-slate-100 transition-colors">
+                        <i data-feather="moon" class="icon-moon w-4 h-4"></i>
+                        <i data-feather="sun" class="icon-sun w-4 h-4"></i>
+                    </button>
                     <button id="btn-open-settings" aria-label="Pengaturan Budget" class="inline-flex items-center space-x-2 text-sm font-medium text-slate-600 hover:text-indigo-600 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">
                         <i data-feather="settings" class="w-4 h-4"></i>
                         <span class="hidden sm:inline">Pengaturan</span>
@@ -63,13 +87,27 @@
         </header>
 
         <main class="max-w-5xl mx-auto px-4 sm:px-6 py-6 flex-grow w-full space-y-6">
+            <section id="install-banner" hidden class="card p-4 flex items-center gap-3">
+                <div class="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
+                    <i data-feather="smartphone" class="w-5 h-5"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-semibold text-slate-900">Pasang Daily Rollover di layar utama</p>
+                    <p id="install-text" class="text-xs text-slate-500"></p>
+                </div>
+                <button type="button" id="btn-install" class="btn btn-primary btn-sm shrink-0">Pasang</button>
+                <button type="button" id="btn-dismiss-install" aria-label="Tutup" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 shrink-0">
+                    <i data-feather="x" class="w-4 h-4"></i>
+                </button>
+            </section>
+
             <section class="card p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <p class="card-label">Hari ini</p>
                     <p id="today-date" class="text-lg font-bold text-slate-900 mt-1"></p>
                     <p id="today-context" class="text-sm text-slate-500 mt-0.5"></p>
                 </div>
-                <ol id="week-days" class="flex gap-2" aria-label="Hari kerja minggu ini"></ol>
+                <ol id="week-days" class="flex gap-1.5 w-full sm:w-auto" aria-label="Hari kerja minggu ini"></ol>
             </section>
 
             <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -153,54 +191,107 @@
                 </div>
             </section>
 
-            <section class="card flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4">
-                <button id="btn-open-add-modal" class="btn btn-primary px-4 py-2.5 min-h-[44px]">
-                    <i data-feather="plus" class="w-5 h-5"></i>
-                    <span>Tambah Transaksi</span>
-                </button>
-
-                <div class="flex flex-col sm:flex-row items-center gap-3">
-                    <div class="relative w-full sm:w-64">
-                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                            <i data-feather="search" class="w-4 h-4"></i>
-                        </div>
-                        <input type="text" id="search-input" placeholder="Cari transaksi..." class="input input-search">
-                    </div>
-
-                    <div class="select-wrap w-full sm:w-44">
-                        <select id="filter-category" class="input"></select>
-                        <i data-feather="chevron-down" class="chevron"></i>
-                    </div>
-                </div>
-            </section>
-
-            <section class="card overflow-hidden">
-                <div class="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div class="flex flex-wrap items-center gap-2.5">
-                        <h2 class="text-base font-semibold text-slate-900 flex items-center space-x-2">
-                            <i data-feather="clock" class="w-4 h-4 text-indigo-600"></i>
-                            <span>Riwayat Transaksi</span>
+            <div class="tabs" role="tablist" aria-label="Tampilan">
+                <button type="button" role="tab" id="tab-transactions" data-view="transactions" aria-selected="true" aria-controls="view-transactions" class="tab">Transaksi</button>
+                <button type="button" role="tab" id="tab-analysis" data-view="analysis" aria-selected="false" aria-controls="view-analysis" class="tab">Analisis</button>
+            </div>
+            <div id="view-transactions" role="tabpanel" aria-labelledby="tab-transactions" class="space-y-6">
+                <section class="card p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="card-label flex items-center gap-1.5">
+                            <i data-feather="zap" class="w-4 h-4"></i>
+                            <span>Template Cepat</span>
                         </h2>
-                        <span id="transaction-count" class="text-xs font-medium bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full">0 transaksi</span>
-                        <span id="weekly-total-spent" class="text-xs font-semibold bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full">Total: Rp 0</span>
+                        <button type="button" id="btn-add-template" class="text-xs font-semibold text-indigo-600 hover:underline">+ Template baru</button>
+                    </div>
+                    <div id="template-list" class="flex flex-wrap gap-2"></div>
+                    <p id="template-empty" class="text-xs text-slate-500">Belum ada template. Buat satu untuk pengeluaran yang sering dicatat, atau centang "Simpan sebagai template" saat menambah transaksi.</p>
+                </section>
+
+                <section class="card flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4">
+                    <button id="btn-open-add-modal" class="btn btn-primary px-4 py-2.5 min-h-[44px]">
+                        <i data-feather="plus" class="w-5 h-5"></i>
+                        <span>Tambah Transaksi</span>
+                    </button>
+
+                    <div class="flex flex-col sm:flex-row items-center gap-3">
+                        <div class="relative w-full sm:w-64">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                <i data-feather="search" class="w-4 h-4"></i>
+                            </div>
+                            <input type="text" id="search-input" placeholder="Cari transaksi..." class="input input-search">
+                        </div>
+
+                        <div class="select-wrap w-full sm:w-44">
+                            <select id="filter-category" class="input"></select>
+                            <i data-feather="chevron-down" class="chevron"></i>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card overflow-hidden">
+                    <div class="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div class="flex flex-wrap items-center gap-2.5">
+                            <h2 class="text-base font-semibold text-slate-900 flex items-center space-x-2">
+                                <i data-feather="clock" class="w-4 h-4 text-indigo-600"></i>
+                                <span>Riwayat Transaksi</span>
+                            </h2>
+                            <span id="transaction-count" class="text-xs font-medium bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full">0 transaksi</span>
+                            <span id="weekly-total-spent" class="text-xs font-semibold bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full">Total: Rp 0</span>
+                        </div>
+
+                        <div class="select-wrap w-full sm:w-64">
+                            <select id="filter-week" class="input input-sm"></select>
+                            <i data-feather="chevron-down" class="chevron"></i>
+                        </div>
                     </div>
 
-                    <div class="select-wrap w-full sm:w-64">
-                        <select id="filter-week" class="input input-sm"></select>
-                        <i data-feather="chevron-down" class="chevron"></i>
-                    </div>
-                </div>
+                    <div id="transaction-list" class="divide-y divide-slate-100"></div>
 
-                <div id="transaction-list" class="divide-y divide-slate-100"></div>
-
-                <div id="empty-state" class="hidden py-12 px-4 text-center">
-                    <div class="inline-flex p-3 bg-slate-100 text-slate-400 rounded-full mb-3">
-                        <i data-feather="tag" class="w-6 h-6"></i>
+                    <div id="empty-state" class="hidden py-12 px-4 text-center">
+                        <div class="inline-flex p-3 bg-slate-100 text-slate-400 rounded-full mb-3">
+                            <i data-feather="tag" class="w-6 h-6"></i>
+                        </div>
+                        <p class="text-slate-600 font-medium">Belum ada transaksi</p>
+                        <p class="text-xs text-slate-400 mt-1">Klik tombol 'Tambah Transaksi' untuk memulai pencatatan.</p>
                     </div>
-                    <p class="text-slate-600 font-medium">Belum ada transaksi</p>
-                    <p class="text-xs text-slate-400 mt-1">Klik tombol 'Tambah Transaksi' untuk memulai pencatatan.</p>
-                </div>
-            </section>
+                </section>
+            </div>
+
+            <div id="view-analysis" role="tabpanel" aria-labelledby="tab-analysis" hidden class="space-y-6">
+                <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <article class="card p-5">
+                        <h2 class="viz-title">Pengeluaran Harian</h2>
+                        <p id="sub-daily" class="viz-sub"></p>
+                        <ul class="viz-legend">
+                            <li><i class="key key-bar"></i>Pengeluaran</li>
+                            <li><i class="key key-over"></i>▲ Melebihi target</li>
+                            <li><i class="key key-target"></i>Target harian</li>
+                        </ul>
+                        <div id="chart-daily"></div>
+                    </article>
+                    <article class="card p-5">
+                        <h2 class="viz-title">Per Kategori</h2>
+                        <p id="sub-category" class="viz-sub"></p>
+                        <div id="chart-category"></div>
+                    </article>
+                    <article class="card p-5">
+                        <h2 class="viz-title">Dibanding Minggu Lalu</h2>
+                        <p id="sub-compare" class="viz-sub"></p>
+                        <div id="chart-compare"></div>
+                    </article>
+                    <article class="card p-5">
+                        <h2 class="viz-title">Tren 6 Minggu</h2>
+                        <p class="viz-sub">Total per minggu dibanding budget mingguan saat ini</p>
+                        <ul class="viz-legend">
+                            <li><i class="key key-bar"></i>Pengeluaran</li>
+                            <li><i class="key key-over"></i>▲ Melebihi budget</li>
+                            <li><i class="key key-target"></i>Budget mingguan</li>
+                        </ul>
+                        <div id="chart-trend"></div>
+                    </article>
+                </section>
+            </div>
         </main>
     </div>
 
@@ -235,7 +326,47 @@
                         <input type="date" id="tx-date" required class="input">
                     </div>
                 </div>
+                <label id="save-template-row" class="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" id="tx-save-template" class="rounded">
+                    <span>Simpan sebagai template</span>
+                </label>
                 <div class="pt-3 flex justify-end gap-3 border-t border-slate-100">
+                    <button type="button" data-close class="btn btn-outline">Batal</button>
+                    <button type="submit" class="btn btn-primary">Simpan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="modal-template" class="modal hidden fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="template-modal-title">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                <h3 id="template-modal-title" class="font-semibold text-slate-900">Template Baru</h3>
+                <button type="button" data-close aria-label="Tutup" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                    <i data-feather="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="form-template" class="p-5 space-y-4">
+                <input type="hidden" id="template-id">
+                <div>
+                    <label for="template-title" class="field-label">Nama Template</label>
+                    <input type="text" id="template-title" placeholder="Contoh: Makan Siang" required class="input">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label for="template-amount" class="field-label">Jumlah (Rp)</label>
+                        <input type="number" id="template-amount" min="1" placeholder="0" required class="input">
+                    </div>
+                    <div>
+                        <label for="template-category" class="field-label">Kategori</label>
+                        <div class="select-wrap">
+                            <select id="template-category" required class="input"></select>
+                            <i data-feather="chevron-down" class="chevron"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="pt-3 flex justify-end gap-3 border-t border-slate-100">
+                    <button type="button" id="btn-delete-template" class="btn text-rose-600 hover:bg-rose-50 mr-auto">Hapus</button>
                     <button type="button" data-close class="btn btn-outline">Batal</button>
                     <button type="submit" class="btn btn-primary">Simpan</button>
                 </div>
@@ -255,7 +386,17 @@
                 <div>
                     <label for="set-weekly-budget" class="field-label">Budget Mingguan (Rp)</label>
                     <input type="number" id="set-weekly-budget" min="0" required class="input">
-                    <p class="text-xs text-slate-500 mt-1.5">Dibagi rata ke 5 hari kerja (Senin–Jumat). Sabtu dan Minggu tidak mendapat jatah.</p>
+                </div>
+                <div>
+                    <span class="field-label">Hari Kerja</span>
+                    <div id="workday-options" class="flex flex-wrap gap-1.5" role="group" aria-label="Hari kerja"></div>
+                    <div id="workday-presets" class="flex flex-wrap gap-2 mt-2">
+                        <button type="button" data-preset="0,1,2,3,4" class="btn btn-outline btn-sm">Sen–Jum</button>
+                        <button type="button" data-preset="0,1,2,3,4,5" class="btn btn-outline btn-sm">Sen–Sab</button>
+                        <button type="button" data-preset="0,1,2,3,4,5,6" class="btn btn-outline btn-sm">Setiap hari</button>
+                    </div>
+                    <p id="settings-hint" class="text-xs font-medium text-slate-700 mt-2"></p>
+                    <p class="text-xs text-slate-500 mt-0.5">Budget dibagi rata ke hari yang dipilih. Hari lainnya libur budget.</p>
                 </div>
                 <div class="pt-3 flex justify-end gap-3 border-t border-slate-100">
                     <button type="button" data-close class="btn btn-outline">Batal</button>
@@ -263,6 +404,12 @@
                 </div>
             </form>
         </div>
+    </div>
+
+    <div id="chart-tooltip" class="viz-tooltip" role="tooltip" hidden>
+        <span id="tip-title"></span>
+        <strong id="tip-value"></strong>
+        <span id="tip-note"></span>
     </div>
 
     <div id="toast-container" class="fixed bottom-5 right-5 z-[60] flex flex-col gap-2 pointer-events-none"></div>
